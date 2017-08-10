@@ -1,4 +1,5 @@
 import logging
+import time
 from collections import namedtuple
 
 from . import export
@@ -76,6 +77,52 @@ def execute(cur, sql):
     elif special_cmd.arg_type == RAW_QUERY:
         return special_cmd.handler(cur=cur, query=sql)
 
+
+@special_command('\\w', '\\w timeout query', 'Repeatedly execute a query every x seconds.')
+def watch_query(cur, arg, **_):
+    """Execute a query every x seconds.
+    Returns (title, rows, headers, status)"""
+    usage = 'Syntax: \\w timeout query.\n\n'
+    if not arg:
+        yield (None, None, None, usage)
+        return
+
+    timeout, _, query = arg.partition(' ')
+
+    # If either timeout or query is missing then print the usage and complain.
+    if (not timeout) or (not query):
+        yield (None, None, None,
+            usage + 'Err: Both timeout and query are required.')
+        return
+
+    try:
+        timeout = int(timeout)
+        if timeout <= 0:
+            raise ValueError('Negative timeout not supported')
+    except ValueError:
+        yield (None, None, None,
+                 usage + 'Err: Timeout must be a positive integer.')
+        return
+
+    while True:
+        try:
+            for sql in sqlparse.split(query):
+                sql = sql.rstrip(';')
+                title = '> %s' % (sql)
+                cur.execute(sql)
+                if cur.description:
+                    headers = [x[0] for x in cur.description]
+                    yield (title, cur, headers, None)
+                else:
+                    yield (title, None, None, None)
+
+            time.sleep(timeout)
+        except KeyboardInterrupt:
+            yield (None, None, None,
+                     'Received Ctrl-C - aborted')
+            return
+
+
 @special_command('help', '\\?', 'Show this help.', arg_type=NO_QUERY, aliases=('\\?', '?'))
 def show_help():  # All the parameters are ignored.
     headers = ['Command', 'Shortcut', 'Description']
@@ -114,5 +161,6 @@ def quit(*_args):
                  arg_type=NO_QUERY, case_sensitive=True)
 @special_command('\\G', '\\G', 'Display current query results vertically.',
                  arg_type=NO_QUERY, case_sensitive=True)
+
 def stub():
     raise NotImplementedError
